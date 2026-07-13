@@ -11,8 +11,8 @@ st.set_page_config(layout="wide", page_title="Notas de Venta")
 # LISTA OFICIAL DE CATEGORÍAS DE PRODUCTO
 CATEGORIAS_PRODUCTO = [
     "kit de tercera", "kit de quinta 4 cil", "kit de quinta 6cil", "kit de quinta 8cil",
-    "valvula de cil", "conmutador carburado", "SENSOR MAP", "SENSOR TEMP", "ACOPLE", "CANERIA", "ELETROVALVULA", "conmutador iniecion", "conmutador de quinta",
-    "variador", "emulador de 4 cil", "t de manimetro", "bobina", "t de agua",
+    "valvula de cil", "conmutador carburado", "conmutador iniection", "sensor MAP", "sensor TEMP", "Acople", "Caneria", "Eletrovalvula", "conmutador de quinta",
+    "variador", "emulador de 4 cil", "t de manometro", "bobina", "T de agua",
     "iniectores de 12", "iniectores de 14", "filtro de 12", "filtro de 14", "CILINDRO",
     "manometro", "diafragma TA", "diafragma TL", "diafragmaAT12", "diafragma AT04",
     "diafragma TA98", "diafragma LR", "diafragma lovato", "diafragma OYRSA", "diafragma OMVL"
