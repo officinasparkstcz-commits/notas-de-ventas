@@ -1,4 +1,5 @@
 streamlit
 pandas
 supabase
+streamlit-aggrid
 tomli; python_version < "3.11"
