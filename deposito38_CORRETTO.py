@@ -144,7 +144,7 @@ def aplicar_interfaz_por_usuario():
 DOPO_LOGIN = r'''
 
 # Applica la visualizzazione riservata subito dopo il login.
-applicar_interfaz_por_usuario()
+aplicar_interfaz_por_usuario()
 '''
 
 
