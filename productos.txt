@@ -2,7 +2,9 @@
 # Un producto por línea. Puedes añadir, borrar o cambiar nombres.
 # No uses comillas ni comas.
 
-kit de tercera
+kit tercera At04
+kit tercera Ta s80
+kit tercera Ta s80plus
 kit de quinta 4 cil
 kit de quinta 6cil
 kit de quinta 8cil
@@ -10,6 +12,7 @@ rampla
 valvula de cil
 conmutador carburado
 conmutador iniecion
+conmutador + manom
 conmutador de quinta
 sensor MAP
 sensor TEMP
@@ -17,8 +20,10 @@ Acople
 Caneria
 Eletrovalvula
 variador
+variador induct
 emulador de 4 cil
-t de manimetro
+emulador de 6cil
+t de manometro
 bobina
 t de agua
 percutor
