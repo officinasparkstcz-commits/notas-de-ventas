@@ -23,10 +23,12 @@ variador
 variador induct
 emulador de 4 cil
 emulador de 6cil
+regulador de alta
 t de manometro
 bobina
 t de agua
 percutor
+NIPPLE
 interface
 iniectores de 12
 iniectores de 14
