@@ -4544,3 +4544,268 @@ st.caption(
     "☁️ Guardado automático activo en Supabase. "
     "Tablas existentes: ventas e inventario."
 )
+
+# =========================================================
+# PRECIOS NUEVOS RUMBOS · EDITOR INTEGRADO EN EL PC
+# =========================================================
+def mostrar_precios_integrados_pc():
+    """
+    Editor compartido de precios USD/Bs.
+    Solo Tony/Toni e Yines (incluida la cuenta SANTACRUZ) pueden modificarlo.
+    La app móvil consulta las mismas tablas de Supabase en modo lectura.
+    """
+    from decimal import Decimal, InvalidOperation
+
+    usuario_precio = nombre_usuario_normalizado()
+    permitido = (
+        usuario_es_toni()
+        or usuario_precio in {"yines", "santacruz", "santacruiz"}
+        or usuario_precio.startswith("yines")
+    )
+    if not permitido:
+        return
+
+    with st.expander("💰 TABLA DE PRECIOS · USD / Bs.", expanded=False):
+        st.markdown(
+            """
+            <style>
+            .st-key-precios_editor_integrado [data-testid="stDataEditor"] {
+                background: #fff2b8 !important;
+            }
+            .st-key-precios_editor_integrado [data-testid="stDataEditor"]
+            [role="columnheader"] {
+                background: #e5a52b !important;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "Editor reservado para Tony e Yines · Precios en USD y conversión a Bs."
+        )
+
+        api = obtener_supabase()
+
+        # Recupera el mismo catálogo compartido que consulta la app móvil.
+        # Si esa tabla no está disponible, utiliza la lista local ya existente.
+        nombres = []
+        try:
+            categorias_remotas = (
+                api.table("categorias_config")
+                .select("nombre,orden")
+                .order("orden")
+                .execute()
+                .data or []
+            )
+            nombres = list(dict.fromkeys(
+                str(fila.get("nombre") or "").strip()
+                for fila in categorias_remotas
+                if str(fila.get("nombre") or "").strip()
+            ))
+        except Exception:
+            nombres = []
+
+        if not nombres:
+            nombres = list(dict.fromkeys(
+                str(nombre).strip()
+                for nombre in CATEGORIAS_PRODUCTO
+                if str(nombre).strip()
+            ))
+
+        if not nombres:
+            st.warning("No hay categorías disponibles para cargar los precios.")
+            return
+
+        # Lee los precios y el multiplicador guardados en Supabase.
+        try:
+            precios = (
+                api.table("precios_categorias")
+                .select("categoria,precio_usd")
+                .execute()
+                .data or []
+            )
+            configuracion = (
+                api.table("precios_configuracion")
+                .select("clave,valor")
+                .eq("clave", "usd_a_bs")
+                .execute()
+                .data or []
+            )
+        except Exception as exc:
+            st.error(
+                "No se pudo leer la tabla de precios. Comprueba que estén "
+                "creadas precios_categorias y precios_configuracion en Supabase. "
+                f"Detalle: {exc}"
+            )
+            return
+
+        precio_actual = {
+            str(fila.get("categoria") or "").strip(): fila.get("precio_usd")
+            for fila in precios
+        }
+        cambio_original = next(
+            (
+                fila.get("valor")
+                for fila in configuracion
+                if fila.get("clave") == "usd_a_bs"
+            ),
+            None,
+        )
+        try:
+            cambio_base = (
+                float(cambio_original)
+                if cambio_original is not None
+                else 0.0
+            )
+        except (TypeError, ValueError):
+            cambio_base = 0.0
+
+        # El formulario evita reruns mientras se introducen varios precios.
+        # Así no desaparecen los valores anteriores al editar otra categoría.
+        with st.container(key="precios_editor_integrado"):
+            with st.form("nr_form_precios_pc", clear_on_submit=False):
+                cambio = st.number_input(
+                    "✕ CAMBIO USD → Bs. (multiplicador)",
+                    min_value=0.0,
+                    value=cambio_base,
+                    step=0.01,
+                    format="%.4f",
+                )
+
+                tabla = pd.DataFrame({
+                    "CATEGORÍA": nombres,
+                    "PRECIO USD ($)": [
+                        (
+                            float(precio_actual[nombre])
+                            if precio_actual.get(nombre) is not None
+                            else None
+                        )
+                        for nombre in nombres
+                    ],
+                })
+                tabla["PRECIO Bs."] = tabla["PRECIO USD ($)"].apply(
+                    lambda valor: (
+                        round(float(valor) * cambio_base, 2)
+                        if pd.notna(valor) and cambio_base > 0
+                        else None
+                    )
+                )
+
+                editada = st.data_editor(
+                    tabla,
+                    hide_index=True,
+                    use_container_width=True,
+                    num_rows="fixed",
+                    disabled=["CATEGORÍA", "PRECIO Bs."],
+                    column_config={
+                        "CATEGORÍA": st.column_config.TextColumn(
+                            "CATEGORÍA", width="medium"
+                        ),
+                        "PRECIO USD ($)": st.column_config.NumberColumn(
+                            "PRECIO USD ($)",
+                            width="small",
+                            min_value=0.0,
+                            step=0.01,
+                            format="%.2f",
+                        ),
+                        "PRECIO Bs.": st.column_config.NumberColumn(
+                            "PRECIO Bs.",
+                            width="small",
+                            format="%.2f",
+                        ),
+                    },
+                    key="nr_precio_tabella_pc_form",
+                )
+
+                st.caption(
+                    "Modifica los importes USD y el cambio. Bs. se calcula "
+                    "automáticamente. Pulsa Guardar para publicar los cambios "
+                    "en la app móvil."
+                )
+                salvar = st.form_submit_button(
+                    "💾 GUARDAR PRECIOS Y CAMBIO",
+                    use_container_width=True,
+                )
+
+        if not salvar:
+            return
+
+        if cambio <= 0:
+            st.error("El cambio USD → Bs. debe ser mayor que cero.")
+            return
+
+        pendientes = []
+        for _, fila in editada.iterrows():
+            nombre = str(fila["CATEGORÍA"]).strip()
+            valor = fila["PRECIO USD ($)"]
+
+            try:
+                nuevo = (
+                    None
+                    if pd.isna(valor)
+                    else Decimal(str(valor)).quantize(Decimal("0.01"))
+                )
+                anterior_raw = precio_actual.get(nombre)
+                anterior = (
+                    None
+                    if anterior_raw is None
+                    else Decimal(str(anterior_raw)).quantize(Decimal("0.01"))
+                )
+            except (InvalidOperation, ValueError, TypeError):
+                st.error(f"Precio USD inválido para la categoría: {nombre}")
+                return
+
+            if nuevo is not None and (
+                nuevo < 0 or nuevo > Decimal("999999999999.99")
+            ):
+                st.error(f"Precio USD fuera de rango: {nombre}")
+                return
+
+            if nuevo != anterior:
+                pendientes.append({
+                    "categoria": nombre,
+                    "precio_usd": str(nuevo) if nuevo is not None else None,
+                })
+
+        try:
+            cambio_decimal = Decimal(str(cambio)).quantize(
+                Decimal("0.0001")
+            )
+            cambio_anterior = (
+                Decimal(str(cambio_original)).quantize(Decimal("0.0001"))
+                if cambio_original is not None
+                else None
+            )
+        except (InvalidOperation, ValueError, TypeError):
+            st.error("El multiplicador USD → Bs. no es válido.")
+            return
+
+        if not pendientes and cambio_decimal == cambio_anterior:
+            st.info("No hay cambios para guardar.")
+            return
+
+        try:
+            if pendientes:
+                api.table("precios_categorias").upsert(
+                    pendientes,
+                    on_conflict="categoria",
+                ).execute()
+
+            if cambio_decimal != cambio_anterior:
+                api.table("precios_configuracion").upsert(
+                    {
+                        "clave": "usd_a_bs",
+                        "valor": str(cambio_decimal),
+                    },
+                    on_conflict="clave",
+                ).execute()
+        except Exception as exc:
+            st.error(f"No se pudieron guardar los precios y el cambio: {exc}")
+            return
+
+        st.success("Precios y cambio guardados en Supabase.")
+        st.rerun()
+
+
+# Muestra el editor únicamente a Tony/Toni e Yines.
+mostrar_precios_integrados_pc()
