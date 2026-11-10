@@ -12,7 +12,6 @@ rampla
 valvula de cil
 conmutador carburado
 conmutador iniecion
-conmutador + manom
 conmutador de quinta
 sensor MAP
 sensor TEMP
