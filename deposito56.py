@@ -2272,9 +2272,11 @@ def editor_coloreado_aggrid(dataframe, sede, key):
                 const categoriaActual = String(params.value || '').trim().toLowerCase();
                 const esNuevaNota = !categoriaActual;
                 valores.forEach((valor) => {
-                    // Manometro se oculta solo al crear una nota nueva.
-                    // En notas existentes sigue disponible para conservar su edicion.
-                    if (esNuevaNota && String(valor || '').trim().toLowerCase() === 'manometro') {
+                    // Oculta solo la variante duplicada con M mayuscula.
+                    // Acepta tambien la variante acentuada Manómetro, pero conserva 'manometro'.
+                    // En notas existentes no se filtra ninguna categoria.
+                    const nombreSinAcentos = String(valor || '').trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+                    if (esNuevaNota && nombreSinAcentos === 'Manometro') {
                         return;
                     }
                     const opcion = document.createElement('option');
