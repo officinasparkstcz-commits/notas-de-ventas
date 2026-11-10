@@ -115,6 +115,8 @@ CATEGORIAS_PRODUCTO = cargar_lista_productos()
 RENOMBRES_HISTORICOS = {
     # Los nombres anteriores se agrupan únicamente con su producto correcto.
     "t de manimetro": "t de manometro",
+    # Nombre histórico con tilde: se muestra como la categoría oficial "manometro".
+    "manómetro": "manometro",
     "filtro": "filtro de 12",
     "filtro 12": "filtro de 12",
     "kit tercera at04": "kit de tercera AT04",
@@ -134,8 +136,9 @@ def catalogo_sin_duplicados(nombres):
     catalogo = {}
     for nombre in nombres:
         limpio = normalizar_categoria(nombre)
-        if limpio and limpio.casefold() not in catalogo:
-            catalogo[limpio.casefold()] = limpio
+        clave = clave_categoria(limpio) if limpio else ""
+        if limpio and clave not in catalogo:
+            catalogo[clave] = limpio
     return list(catalogo.values())
 
 
@@ -2266,7 +2269,14 @@ def editor_coloreado_aggrid(dataframe, sede, key):
                 this.lista.id = idLista;
 
                 const valores = Array.isArray(params.values) ? params.values : [];
+                const categoriaActual = String(params.value || '').trim().toLowerCase();
+                const esNuevaNota = !categoriaActual;
                 valores.forEach((valor) => {
+                    // Manometro se oculta solo al crear una nota nueva.
+                    // En notas existentes sigue disponible para conservar su edicion.
+                    if (esNuevaNota && String(valor || '').trim().toLowerCase() === 'manometro') {
+                        return;
+                    }
                     const opcion = document.createElement('option');
                     opcion.value = String(valor);
                     this.lista.appendChild(opcion);
