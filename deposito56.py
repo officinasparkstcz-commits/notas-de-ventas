@@ -68,7 +68,7 @@ st.set_page_config(layout="wide", page_title="Notas de Venta")
 CATEGORIAS_PRODUCTO = [
     "kit de tercera", "kit de quinta 4 cil", "kit de quinta 6cil", "kit de quinta 8cil", "rampla",
     "valvula de cil", "conmutador carburado", "conmutador iniecion", "conmutador de quinta", "sensor MAP", "sensor TEMP", "Acople", "Caneria", "Eletrovalvula",
-    "variador", "emulador de 4 cil", "t de manimetro", "bobina", "t de agua", "percutor", "interface",
+    "variador", "emulador de 4 cil", "t de manometro", "bobina", "t de agua", "percutor", "interface",
     "iniectores de 12", "iniectores de 14", "filtro de 12", "filtro de 14", "CILINDRO",
     "manometro", "diafragma TA", "diafragma TL", "diafragmaAT12", "diafragma AT04",
     "diafragma TA98", "diafragma LR", "diafragma lovato", "diafragma OYRSA", "diafragma OMVL"
@@ -110,6 +110,34 @@ def cargar_lista_productos():
 
 
 CATEGORIAS_PRODUCTO = cargar_lista_productos()
+
+# Nombres canonicos compartidos. Los registros historicos permanecen intactos.
+RENOMBRES_HISTORICOS = {
+    # Los nombres anteriores se agrupan únicamente con su producto correcto.
+    "t de manimetro": "t de manometro",
+    "filtro": "filtro de 12",
+    "filtro 12": "filtro de 12",
+    "kit tercera at04": "kit de tercera AT04",
+    "kit de at04": "kit de tercera AT04",
+}
+# Filtro de 14 NO se agrupa con Filtro / Filtro de 12.
+
+
+def normalizar_categoria(nombre):
+    nombre = " ".join(str(nombre or "").split())
+    return RENOMBRES_HISTORICOS.get(nombre.casefold(), nombre)
+
+def clave_categoria(nombre):
+    return normalizar_categoria(nombre).casefold()
+
+def catalogo_sin_duplicados(nombres):
+    catalogo = {}
+    for nombre in nombres:
+        limpio = normalizar_categoria(nombre)
+        if limpio and limpio.casefold() not in catalogo:
+            catalogo[limpio.casefold()] = limpio
+    return list(catalogo.values())
+
 
 # =========================================================
 # BASE DE DATOS COMPARTIDA EN SUPABASE
@@ -267,10 +295,26 @@ def categorias_disponibles(dataframe=None):
     opciones = list(CATEGORIAS_PRODUCTO)
     if dataframe is not None and "Categoría" in dataframe.columns:
         for valor in dataframe["Categoría"].fillna("").astype(str):
-            categoria = valor.strip()
-            if categoria and categoria not in opciones:
+            categoria = normalizar_categoria(valor)
+            if categoria and clave_categoria(categoria) not in {clave_categoria(v) for v in opciones}:
                 opciones.append(categoria)
-    return opciones or [""]
+    return catalogo_sin_duplicados(opciones) or [""]
+
+
+# Esta categoría se conserva en el catálogo y en todo el histórico,
+# pero no se ofrece como opción al crear/editar una nota desde el PC.
+CATEGORIAS_NO_OFRECER_EN_NOTAS = {
+    clave_categoria("conmutador + manometro"),
+}
+
+
+def categorias_editor_notas(dataframe=None):
+    """Opciones del selector de Producto en las notas, sin borrar históricos."""
+    return [
+        categoria
+        for categoria in categorias_disponibles(dataframe)
+        if clave_categoria(categoria) not in CATEGORIAS_NO_OFRECER_EN_NOTAS
+    ] or [""]
 
 
 def aplicar_interfaz_por_usuario():
@@ -375,7 +419,7 @@ def exigir_login():
 
 def payload_nota(sede, fila, incluir_auditoria=False):
     """Crea una actualización parcial sin tocar columnas de costos ajenas."""
-    categoria = str(fila.get("Categoría", "") or "").strip()
+    categoria = normalizar_categoria(fila.get("Categoría", ""))
     descripcion = str(fila.get("Descripción", "") or "").strip()
 
     payload = {
@@ -1776,7 +1820,7 @@ def cargar_tabla(sede):
     for fila in filas_remotas:
         fecha = pd.to_datetime(fila.get("fecha"), errors="coerce")
         fecha = fecha.date() if not pd.isna(fecha) else datetime.today().date()
-        categoria = str(fila.get("categoria") or "").strip()
+        categoria = normalizar_categoria(fila.get("categoria"))
         descripcion = str(fila.get("descripcion") or "").strip()
 
         datos.append(
@@ -1914,9 +1958,11 @@ def cargar_inventario():
 
     for fila in respuesta.data or []:
         sede = fila.get("sede")
-        categoria = fila.get("categoria")
-        if sede in inventario and categoria in inventario[sede]:
-            inventario[sede][categoria] = max(
+        categoria = normalizar_categoria(fila.get("categoria"))
+        coincidencia = next((c for c in inventario.get(sede, {})
+                            if clave_categoria(c) == clave_categoria(categoria)), None)
+        if coincidencia is not None:
+            inventario[sede][coincidencia] += max(
                 0, entero_seguro(fila.get("ingreso"))
             )
 
@@ -1949,6 +1995,18 @@ def guardar_inventario_cambios(cambios):
         }
 
     filas = list(filas_unicas.values())
+    # Se requiere una migración controlada antes de editar entradas con dos nombres históricos.
+    # Una actualización directa de una sola fila podría duplicar cantidades.
+    if filas:
+        antiguas = cargar_tabla_completa_supabase("inventario")
+        for cambio in filas:
+            coincidencias = [r for r in antiguas
+                             if str(r.get("sede") or "").upper() == cambio["sede"]
+                             and clave_categoria(r.get("categoria")) == clave_categoria(cambio["categoria"])]
+            if len(coincidencias) > 1 or (coincidencias and
+                str(coincidencias[0].get("categoria") or "").strip() != cambio["categoria"]):
+                raise ValueError("La categoría tiene ingresos históricos con otro nombre. "
+                                 "Ejecuta primero la migración SQL segura adjunta para editarla.")
     if not filas:
         return 0
 
@@ -2262,7 +2320,7 @@ def editor_coloreado_aggrid(dataframe, sede, key):
         cellEditor=producto_libre_editor,
         cellEditorPopup=True,
         cellEditorParams={
-            "values": categorias_disponibles(df_grid),
+            "values": categorias_editor_notas(df_grid),
         },
         tooltipValueGetter=JsCode(
             """
@@ -2863,6 +2921,34 @@ div[data-testid="stButton"] > button:focus {
     -webkit-text-fill-color: #3b2b00 !important;
     font-weight: 900 !important;
     text-shadow: 0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
+/* Tarjeta compacta para el total del producto por rango de fechas.
+   Evita números recortados incluso en la barra lateral estrecha. */
+[class*="st-key-cantidad_rango_"] [data-testid="stMetric"] {
+    padding: 8px 12px !important;
+    min-width: 0 !important;
+    margin-bottom: 10px !important;
+    border-radius: 12px !important;
+}
+[class*="st-key-cantidad_rango_"] [data-testid="stMetricValue"] {
+    font-size: 1.35rem !important;
+    line-height: 1.35 !important;
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    overflow-wrap: anywhere !important;
+}
+[class*="st-key-cantidad_rango_"] [data-testid="stMetricValue"] * {
+    font-size: inherit !important;
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+}
+[class*="st-key-cantidad_rango_"] [data-testid="stMetricLabel"] * {
+    font-size: 0.72rem !important;
+    line-height: 1.15 !important;
+    white-space: normal !important;
 }
 
 /* Encabezado gráfico de Totales del Rango */
@@ -3573,6 +3659,28 @@ div[data-testid="stDataEditor"] button {
     unsafe_allow_html=True,
 )
 
+# Catálogo único PC / móvil: datos de Supabase, no lista congelada del programa.
+def cargar_catalogo_compartido_pc():
+    try:
+        categorias = cargar_tabla_completa_supabase("categorias_config")
+    except Exception:
+        categorias = []
+    nombres = [r.get("nombre") for r in sorted(
+        categorias, key=lambda r: int(r.get("orden") or 1000))]
+    if not nombres:
+        nombres = list(CATEGORIAS_PRODUCTO)
+    # Recuperar categorías históricas no presentes en la configuración actual.
+    try:
+        historico_ingresos = cargar_tabla_completa_supabase("inventario")
+        historico_ventas = cargar_tabla_completa_supabase("ventas")
+        nombres += [r.get("categoria") for r in historico_ingresos]
+        nombres += [r.get("categoria") for r in historico_ventas]
+    except Exception:
+        pass
+    return catalogo_sin_duplicados(nombres)
+
+CATEGORIAS_PRODUCTO = cargar_catalogo_compartido_pc()
+
 # 2. CARGA DE DATOS COMPARTIDOS DESDE SUPABASE
 # session_state mantiene la interfaz rápida; Supabase conserva y comparte
 # todos los datos entre los equipos sin recrear las tablas.
@@ -3830,15 +3938,15 @@ def mostrar_seccion_notas(t):
 
             # Selector de un único producto. La cantidad se calcula solamente
             # con las notas de la sección actual y dentro del rango de fechas.
-            col_producto, col_cantidad = st.columns([2.2, 1], gap="small")
-            with col_producto:
-                producto_seleccionado = st.selectbox(
-                    "Producto:",
-                    options=categorias_disponibles(
-                        st.session_state.tablas[tid]
-                    ),
-                    key=f"producto_rango_{tid}"
-                )
+            # El selector ocupa todo el panel lateral; la cantidad se muestra
+            # debajo, sin comprimirla en una columna minúscula.
+            producto_seleccionado = st.selectbox(
+                "Producto:",
+                options=categorias_disponibles(
+                    st.session_state.tablas[tid]
+                ),
+                key=f"producto_rango_{tid}"
+            )
 
             if len(st.session_state.tablas[tid]) > 0:
                 df_filtro = st.session_state.tablas[tid].copy()
@@ -3850,12 +3958,15 @@ def mostrar_seccion_notas(t):
                     & (df_filtro['Fecha'] <= f_fin)
                 ].copy()
 
-                cilindros = df_filtro[
-                    df_filtro['Categoría'] == 'CILINDRO'
-                ]['Cantidad'].sum()
-                cantidad_producto = df_filtro[
-                    df_filtro['Categoría'] == producto_seleccionado
-                ]['Cantidad'].sum()
+                # Coincidencia con el catálogo normalizado; no depende del
+                # nombre antiguo ni de las mayúsculas en ventas.
+                clave_ventas = df_filtro['Categoría'].map(clave_categoria)
+                cilindros = df_filtro.loc[
+                    clave_ventas == clave_categoria('CILINDRO'), 'Cantidad'
+                ].sum()
+                cantidad_producto = df_filtro.loc[
+                    clave_ventas == clave_categoria(producto_seleccionado), 'Cantidad'
+                ].sum()
                 total_bs = df_filtro['Precio Total (Bs.)'].sum()
             else:
                 df_filtro = pd.DataFrame(columns=COLUMNAS_NOTAS)
@@ -3863,7 +3974,7 @@ def mostrar_seccion_notas(t):
                 cantidad_producto = 0
                 total_bs = 0.0
 
-            with col_cantidad:
+            with st.container(key=f"cantidad_rango_{tid}"):
                 st.metric(label="CANT. VENDIDA", value=int(cantidad_producto))
 
             st.metric(label="CILINDROS VENDIDOS", value=int(cilindros))
@@ -4040,16 +4151,16 @@ for sede_resumen in SEDES:
     for producto_valor in (
         df_productos_sede["Categoría"].fillna("").astype(str).tolist()
     ):
-        producto_limpio = producto_valor.strip()
-        clave_producto = producto_limpio.casefold()
+        producto_limpio = normalizar_categoria(producto_valor)
+        clave_producto = clave_categoria(producto_limpio)
 
         if producto_limpio and clave_producto not in productos_vistos:
             productos_vistos.add(clave_producto)
             productos_resumen.append(producto_limpio)
 
 for producto_oficial in CATEGORIAS_PRODUCTO:
-    producto_limpio = str(producto_oficial or "").strip()
-    clave_producto = producto_limpio.casefold()
+    producto_limpio = normalizar_categoria(producto_oficial)
+    clave_producto = clave_categoria(producto_limpio)
 
     if producto_limpio and clave_producto not in productos_vistos:
         productos_vistos.add(clave_producto)
@@ -4120,8 +4231,8 @@ else:
         else:
             mascara_producto = (
                 mascara_fecha
-                & categorias_resumen.str.casefold().eq(
-                    producto_resumen_seleccionado.casefold()
+                & categorias_resumen.map(clave_categoria).eq(
+                    clave_categoria(producto_resumen_seleccionado)
                 )
             )
 
@@ -4241,7 +4352,7 @@ for sede in ["SANTACRUZ", "TARIJA", "CAMIONCITO"]:
     if len(df_sede) > 0:
         for cat in CATEGORIAS_PRODUCTO:
             ventas_por_sede[sede][cat] = int(
-                df_sede.loc[df_sede["Categoría"] == cat, "Cantidad"].sum()
+                df_sede.loc[df_sede["Categoría"].map(clave_categoria) == clave_categoria(cat), "Cantidad"].sum()
             )
 
 # 5. CONTROL DE INVENTARIO Y DEPÓSITO
@@ -4486,6 +4597,71 @@ with st.expander(inventory_expander_label, expanded=False):
     )
 
 
+
+
+# Gestión del catálogo reservada al administrador.
+if usuario_es_toni():
+    with st.expander("🗂️ CATEGORÍAS · AÑADIR / RENOMBRAR (TONY)", expanded=False):
+        st.caption("Las categorías se comparten con el teléfono mediante Supabase. "
+                   "No se eliminan notas ni movimientos históricos.")
+        nombre_nuevo = st.text_input("Nueva categoría", key="cat_nueva_tony").strip()
+        if st.button("Añadir categoría", key="cat_add_tony"):
+            if not nombre_nuevo:
+                st.warning("Escribe el nombre de la categoría.")
+            elif clave_categoria(nombre_nuevo) in {clave_categoria(c) for c in CATEGORIAS_PRODUCTO}:
+                st.warning("La categoría ya existe.")
+            else:
+                try:
+                    obtener_supabase().table("categorias_config").insert({
+                        "nombre": nombre_nuevo, "visible_stock": True,
+                        "orden": len(CATEGORIAS_PRODUCTO)+1
+                    }).execute()
+                    st.success("Categoría añadida. Recarga la página para verla en ambos dispositivos.")
+                except Exception as exc:
+                    st.error(f"No se pudo añadir: {exc}")
+        st.markdown("**Renombrar conservando todo el histórico**")
+        actual = st.selectbox("Categoría actual", CATEGORIAS_PRODUCTO,
+                              key="cat_rename_actual_tony")
+        nuevo = st.text_input("Nuevo nombre", key="cat_rename_nuevo_tony").strip()
+        if st.button("Guardar cambio de nombre con histórico", key="cat_rename_tony"):
+            if not nuevo or clave_categoria(actual) == clave_categoria(nuevo):
+                st.warning("Introduce un nombre nuevo y diferente.")
+            else:
+                try:
+                    obtener_supabase().rpc("renombrar_categoria", {
+                        "p_nombre_actual": actual,
+                        "p_nuevo_nombre": nuevo,
+                        "p_usuario": usuario_actual(),
+                    }).execute()
+                    st.session_state.pop("tablas", None)
+                    st.session_state.pop("inventario_ingresos_parciales", None)
+                    st.success("Nombre cambiado; entradas y ventas anteriores conservadas.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error("No se pudo renombrar. Verifica que la función SQL "
+                             f"renombrar_categoria esté instalada en Supabase: {exc}")
+        st.markdown("**Corregir los dos nombres históricos**")
+        st.caption("T de manimetro → T de manometro; Filtro → Filtro de 12; "
+                   "kit tercera At04 → kit de tercera AT04. Filtro de 14 no se modifica. "
+                   "Las entradas se suman y las ventas conservan sus cantidades.")
+        if st.button("Aplicar correcciones históricas", key="cat_fix_legacy_tony"):
+            try:
+                for viejo, nuevo_nombre in RENOMBRES_HISTORICOS.items():
+                    datos = obtener_supabase().table("categorias_config").select("nombre").execute().data or []
+                    historico = cargar_tabla_completa_supabase("ventas") + cargar_tabla_completa_supabase("inventario")
+                    existe = any(str(r.get("nombre") or r.get("categoria") or "").strip().casefold() == viejo for r in datos + historico)
+                    if existe:
+                        obtener_supabase().rpc("renombrar_categoria", {
+                            "p_nombre_actual": viejo, "p_nuevo_nombre": nuevo_nombre,
+                            "p_usuario": usuario_actual(),
+                        }).execute()
+                st.session_state.pop("tablas", None)
+                st.session_state.pop("inventario_ingresos_parciales", None)
+                st.success("Correcciones aplicadas conservando los registros históricos.")
+                st.rerun()
+            except Exception as exc:
+                st.error("No se pudo finalizar la migración. Comprueba la función "
+                         f"SQL incluida y la copia de seguridad: {exc}")
 
 # =========================================================
 # COPIA DE SEGURIDAD COMPLETA DE SUPABASE
