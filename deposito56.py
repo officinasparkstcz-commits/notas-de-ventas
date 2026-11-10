@@ -132,11 +132,26 @@ def normalizar_categoria(nombre):
 def clave_categoria(nombre):
     return normalizar_categoria(nombre).casefold()
 
+
+def clave_categoria_inventario(nombre):
+    """Mantiene separadas Manometro y manometro hasta la migración histórica."""
+    limpio = " ".join(str(nombre or "").split())
+    sin_acentos = "".join(
+        caracter
+        for caracter in unicodedata.normalize("NFKD", limpio)
+        if not unicodedata.combining(caracter)
+    )
+    if sin_acentos.casefold() == "manometro":
+        # Preserva la M mayúscula/minúscula para distinguir los dos stocks.
+        return sin_acentos
+    return clave_categoria(limpio)
+
+
 def catalogo_sin_duplicados(nombres):
     catalogo = {}
     for nombre in nombres:
         limpio = normalizar_categoria(nombre)
-        clave = clave_categoria(limpio) if limpio else ""
+        clave = clave_categoria_inventario(limpio) if limpio else ""
         if limpio and clave not in catalogo:
             catalogo[clave] = limpio
     return list(catalogo.values())
@@ -1963,7 +1978,7 @@ def cargar_inventario():
         sede = fila.get("sede")
         categoria = normalizar_categoria(fila.get("categoria"))
         coincidencia = next((c for c in inventario.get(sede, {})
-                            if clave_categoria(c) == clave_categoria(categoria)), None)
+                            if clave_categoria_inventario(c) == clave_categoria_inventario(categoria)), None)
         if coincidencia is not None:
             inventario[sede][coincidencia] += max(
                 0, entero_seguro(fila.get("ingreso"))
@@ -2005,7 +2020,7 @@ def guardar_inventario_cambios(cambios):
         for cambio in filas:
             coincidencias = [r for r in antiguas
                              if str(r.get("sede") or "").upper() == cambio["sede"]
-                             and clave_categoria(r.get("categoria")) == clave_categoria(cambio["categoria"])]
+                             and clave_categoria_inventario(r.get("categoria")) == clave_categoria_inventario(cambio["categoria"])]
             if len(coincidencias) > 1 or (coincidencias and
                 str(coincidencias[0].get("categoria") or "").strip() != cambio["categoria"]):
                 raise ValueError("La categoría tiene ingresos históricos con otro nombre. "
@@ -3708,6 +3723,17 @@ if "inventario_ingresos_parciales" not in st.session_state:
 if "inventario_editor_version" not in st.session_state:
     st.session_state.inventario_editor_version = 0
 
+# Se añadió una categoría histórica que debe seguir separada en el depósito.
+# Si la sesión de Streamlit conserva el inventario de la versión anterior,
+# recargarlo para recuperar ambas filas: Manometro y manometro.
+if any(
+    categoria not in st.session_state.inventario_ingresos_parciales.get(sede, {})
+    for sede in SEDES
+    for categoria in CATEGORIAS_PRODUCTO
+):
+    st.session_state.inventario_ingresos_parciales = cargar_inventario()
+    st.session_state.inventario_editor_version += 1
+
 if st.session_state.pop("inventario_guardado_ok", False):
     st.success("✅ Inventario guardado correctamente en Supabase.")
 
@@ -4364,7 +4390,11 @@ for sede in ["SANTACRUZ", "TARIJA", "CAMIONCITO"]:
     if len(df_sede) > 0:
         for cat in CATEGORIAS_PRODUCTO:
             ventas_por_sede[sede][cat] = int(
-                df_sede.loc[df_sede["Categoría"].map(clave_categoria) == clave_categoria(cat), "Cantidad"].sum()
+                df_sede.loc[
+                    df_sede["Categoría"].map(clave_categoria_inventario)
+                    == clave_categoria_inventario(cat),
+                    "Cantidad",
+                ].sum()
             )
 
 # 5. CONTROL DE INVENTARIO Y DEPÓSITO
