@@ -304,7 +304,7 @@ def categorias_disponibles(dataframe=None):
 # Esta categoría se conserva en el catálogo y en todo el histórico,
 # pero no se ofrece como opción al crear/editar una nota desde el PC.
 CATEGORIAS_NO_OFRECER_EN_NOTAS = {
-    clave_categoria("conmutador + manometro"),
+    clave_categoria("conmutador + manom"),
 }
 
 
