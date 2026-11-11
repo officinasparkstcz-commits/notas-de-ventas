@@ -189,6 +189,11 @@ for raw_name in raw_products:
         products_by_key[key_name]=official_name
 products=list(products_by_key.values())
 
+# En la vista móvil mostramos únicamente "manometro" en minúsculas.
+# "Manometro" con M mayúscula queda oculto para evitar la fila duplicada;
+# no se modifican ni se eliminan registros de Supabase.
+products=[name for name in products if name != "Manometro"]
+
 # IMPORTANTE: puede haber varias filas históricas de una categoría/sede.
 # Se suman, no se sobrescriben. Filtro + Filtro 12 se acumulan en Filtro de 12.
 entries={}
