@@ -4832,10 +4832,19 @@ def mostrar_precios_integrados_pc():
 
         # Oculta únicamente estas dos categorías en la tabla de precios.
         # No elimina ni modifica categorías, ventas o movimientos en Supabase.
-        # Se conserva "manometro" en minúscula y las variantes "filtro de 12/14".
+        # Reconoce también "Manómetro" con acento, conservando "manometro"
+        # en minúscula y las variantes "filtro de 12/14".
+        def clave_precio_sin_acentos(valor):
+            return "".join(
+                caracter
+                for caracter in unicodedata.normalize("NFKD", str(valor))
+                if not unicodedata.combining(caracter)
+            )
+
         nombres = [
             nombre for nombre in nombres
-            if nombre not in {"Filtro", "Manometro"}
+            if nombre != "Filtro"
+            and clave_precio_sin_acentos(nombre) != "Manometro"
         ]
 
         if not nombres:
