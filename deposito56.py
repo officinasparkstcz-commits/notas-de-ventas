@@ -115,8 +115,8 @@ CATEGORIAS_PRODUCTO = cargar_lista_productos()
 RENOMBRES_HISTORICOS = {
     # Los nombres anteriores se agrupan únicamente con su producto correcto.
     "t de manimetro": "t de manometro",
-    # Nombre histórico con tilde: se muestra como la categoría oficial "manometro".
-    "manómetro": "manometro",
+    # Manómetro (M mayúscula) y manometro (m minúscula) se mantienen
+    # como categorías separadas hasta completar la migración de las 12 ventas.
     "filtro": "filtro de 12",
     "filtro 12": "filtro de 12",
     "kit tercera at04": "kit de tercera AT04",
