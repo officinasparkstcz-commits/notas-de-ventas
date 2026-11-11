@@ -4830,6 +4830,14 @@ def mostrar_precios_integrados_pc():
                 if str(nombre).strip()
             ))
 
+        # Oculta únicamente estas dos categorías en la tabla de precios.
+        # No elimina ni modifica categorías, ventas o movimientos en Supabase.
+        # Se conserva "manometro" en minúscula y las variantes "filtro de 12/14".
+        nombres = [
+            nombre for nombre in nombres
+            if nombre not in {"Filtro", "Manometro"}
+        ]
+
         if not nombres:
             st.warning("No hay categorías disponibles para cargar los precios.")
             return
