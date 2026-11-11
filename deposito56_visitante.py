@@ -6,8 +6,8 @@ operaciones de escritura a Supabase. Mantiene sus tablas y cálculos básicos.
 from __future__ import annotations
 
 from datetime import date
-from pathlib import Path
 import hmac
+import unicodedata
 import pandas as pd
 import streamlit as st
 from supabase import create_client
@@ -78,7 +78,11 @@ def fetch_all(table, fields, location=None):
 def load_data():
     sales=fetch_all("ventas", "id,sede,nro_nota,fecha,cliente,categoria,descripcion,cantidad,precio_unitario,precio_total,precio_dolar")
     inventory=fetch_all("inventario", "sede,categoria,ingreso")
-    return sales,inventory
+    try:
+        categories=fetch_all("categorias_config", "nombre,orden")
+    except Exception:
+        categories=[]
+    return sales,inventory,categories
 
 
 st.markdown('<div class="nr-heading"><h2>NOTAS DE VENTAS · DEPÓSITO 56</h2><small>NUEVO RUMBOS · VERSIÓN MÓVIL VISITANTE</small></div>',unsafe_allow_html=True)
@@ -91,7 +95,7 @@ with col_logout:
         st.session_state["deposito56_visitante_autorizado"]=False;st.rerun()
 
 try:
-    sales_rows,inventory_rows=load_data()
+    sales_rows,inventory_rows,categories_rows=load_data()
 except Exception:
     st.error("No se pudieron cargar las tablas. Revisa la conexión y los permisos de lectura de Supabase.")
     st.stop()
@@ -147,23 +151,89 @@ for sede, display in SEDES.items():
 
 st.subheader("CONTROL DE INVENTARIO Y DEPÓSITO")
 st.caption("Los ingresos se leen de inventario. Las salidas se calculan de TODAS las notas registradas, sin filtro por fechas, igual que en el programa original.")
-product_path=Path(__file__).resolve().with_name("productos.txt")
-if product_path.exists():
-    products=list(dict.fromkeys(x.strip() for x in product_path.read_text(encoding="utf-8-sig").splitlines() if x.strip() and not x.lstrip().startswith("#")))
-else:
-    products=sorted({str(r.get("categoria") or "").strip() for r in inventory_rows if r.get("categoria")})
-entries={(str(r.get("sede") or "").upper(),str(r.get("categoria") or "").strip()):int(r.get("ingreso") or 0) for r in inventory_rows}
+# Replicar exactamente la normalización de categorías del programa PC.
+# Los registros históricos no se borran: Filtro se contabiliza dentro de Filtro de 12.
+RENOMBRES_HISTORICOS = {
+    "t de manimetro": "t de manometro",
+    "manómetro": "manometro",
+    "filtro": "filtro de 12",
+    "filtro 12": "filtro de 12",
+    "kit tercera at04": "kit de tercera AT04",
+    "kit de at04": "kit de tercera AT04",
+}
+
+def normalizar_categoria(nombre):
+    nombre = " ".join(str(nombre or "").split())
+    return RENOMBRES_HISTORICOS.get(nombre.casefold(), nombre)
+
+def clave_categoria(nombre):
+    return normalizar_categoria(nombre).casefold()
+
+def clave_categoria_inventario(nombre):
+    limpio = " ".join(str(nombre or "").split())
+    sin_acentos = "".join(
+        caracter for caracter in unicodedata.normalize("NFKD", limpio)
+        if not unicodedata.combining(caracter)
+    )
+    if sin_acentos.casefold() == "manometro":
+        return sin_acentos
+    return clave_categoria(limpio)
+
+def catalogo_sin_duplicados(nombres):
+    catalogo = {}
+    for nombre in nombres:
+        limpio = normalizar_categoria(nombre)
+        clave = clave_categoria_inventario(limpio) if limpio else ""
+        if limpio and clave not in catalogo:
+            catalogo[clave] = limpio
+    return list(catalogo.values())
+
+# El PC usa primero categorias_config ordenada y añade nombres históricos
+# encontrados en inventario/ventas. El móvil sigue la misma fuente y regla.
+nombres = [
+    r.get("nombre") for r in sorted(
+        categories_rows, key=lambda r: int(r.get("orden") or 1000)
+    )
+]
+if not nombres:
+    nombres = [
+        "kit de tercera", "kit de quinta 4 cil", "kit de quinta 6cil",
+        "kit de quinta 8cil", "rampla", "valvula de cil",
+        "conmutador carburado", "conmutador iniecion", "conmutador de quinta",
+        "sensor MAP", "sensor TEMP", "Acople", "Caneria", "Eletrovalvula",
+        "variador", "emulador de 4 cil", "t de manometro", "bobina",
+        "t de agua", "percutor", "interface", "iniectores de 12",
+        "iniectores de 14", "filtro de 12", "filtro de 14", "CILINDRO",
+        "manometro", "diafragma TA", "diafragma TL", "diafragmaAT12",
+        "diafragma AT04", "diafragma TA98", "diafragma LR",
+        "diafragma lovato", "diafragma OYRSA", "diafragma OMVL"
+    ]
+nombres += [r.get("categoria") for r in inventory_rows]
+nombres += [r.get("categoria") for r in sales_rows]
+products = catalogo_sin_duplicados(nombres)
+
+# Sumar las filas de inventario que pertenecen a la misma categoría canónica.
+entries={}
+for r in inventory_rows:
+    sede=str(r.get("sede") or "").upper()
+    categoria=normalizar_categoria(r.get("categoria"))
+    identifier=(sede,clave_categoria_inventario(categoria))
+    entries[identifier]=entries.get(identifier,0)+int(r.get("ingreso") or 0)
+
+# Calcular las salidas usando la misma clave canónica que el PC.
 sold={}
 for item in records:
-    identifier=(item["_sede"],item["Categoría"])
+    identifier=(item["_sede"],clave_categoria_inventario(item["Categoría"]))
     sold[identifier]=sold.get(identifier,0)+item["Cantidad"]
+
 inv=[]
 for name in products:
     row={"Producto":name}
     for sede,label in SEDES.items():
         abbr={"SANTACRUZ":"Santa Cruz","TARIJA":"Tarija","CAMIONCITO":"Camioncito"}[sede]
-        ingress=entries.get((sede,name),0)
-        out=sold.get((sede,name),0)
+        category_key=clave_categoria_inventario(name)
+        ingress=entries.get((sede,category_key),0)
+        out=sold.get((sede,category_key),0)
         row[f"Ing. {abbr}"]=ingress
         row[f"Sal. {abbr}"]=out
         row[f"Stock {abbr}"]=ingress-out
